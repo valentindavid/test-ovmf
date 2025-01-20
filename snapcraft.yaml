@@ -64,7 +64,7 @@ parts:
     override-build: |
       mkdir -p ./root/efi/EFI/BOOT
       cp "${CRAFT_STAGE}/fw/Shell.efi" ./root/efi/EFI/BOOT/BOOTX64.EFI
-      cp "${CRAFT_STAGE}/secboot/LockDown.efi" ./root/
+      cp "${CRAFT_STAGE}/secboot/LockDown.efi" ./root/efi/
 
       rm -f lockdown.img
       truncate --size 100M lockdown.img
@@ -87,6 +87,6 @@ parts:
       qemu-system-x86_64 -nographic -m 4G -smp 2 -M q35 \
         -drive "if=pflash,file=${CRAFT_STAGE}/fw/OVMF_CODE.fd,readonly=on,format=raw" \
         -drive "if=pflash,file=OVMF_VARS.fd,format=raw" \
-        -drive "if=virtio,file=${CRAFT_STAGE}/lockdown.img,format=raw"
+        -drive "if=virtio,file=${CRAFT_STAGE}/lockdown.img,format=raw" >qemu.out 2>qemu.err </dev/null
 
       install -Dm644 OVMF_VARS.fd "${CRAFT_PART_INSTALL}/fw/OVMF_VARS.secboot.fd"
