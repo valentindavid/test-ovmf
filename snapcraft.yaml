@@ -1,0 +1,92 @@
+name: test-ovmf
+base: core24
+confinement: strict
+version: edk2-stable202411
+summary: EDK2
+description: EDK2
+
+parts:
+  ovmf:
+    build-packages:
+      - uuid-dev
+      - nasm
+      - acpica-tools
+    plugin: nil
+    source: https://github.com/tianocore/edk2.git
+    source-tag: edk2-stable202411
+    override-build: |
+      set +eu
+      . ./edksetup.sh
+      set -eu
+
+      make -C BaseTools/Source/C -j"${CRAFT_PARALLEL_BUILD_COUNT}"
+      build -n "${CRAFT_PARALLEL_BUILD_COUNT}" \
+        --buildtarget=RELEASE \
+        --tagname=GCC5 \
+        --platform='OvmfPkg/OvmfPkgIa32X64.dsc' \
+        --arch=IA32 \
+        --arch=X64 \
+        -D TPM1_ENABLE \
+        -D TPM2_ENABLE \
+        -D TPM2_CONFIG_ENABLE \
+        -D SECURE_BOOT_ENABLE \
+        -D SMM_REQUIRE
+
+      install -Dm644 -t "${CRAFT_PART_INSTALL}/fw" \
+        Build/Ovmf3264/RELEASE_GCC5/FV/OVMF_CODE.fd \
+        Build/Ovmf3264/RELEASE_GCC5/FV/OVMF_VARS.fd \
+        Build/Ovmf3264/RELEASE_GCC5/X64/Shell.efi
+
+  efitools:
+    build-packages:
+      - gnu-efi
+      - libssl-dev
+      - sbsigntool
+      - help2man
+      - libfile-slurp-perl
+    plugin: nil
+    source: https://git.kernel.org/pub/scm/linux/kernel/git/jejb/efitools.git
+    source-tag: v1.9.2
+    override-build: |
+      make -j1 EXTRAKEYS="" MYGUID="7bea37ed-f339-470a-aefe-c6b1bef55040"
+      install -Dm644 -t "${CRAFT_PART_INSTALL}/secboot" \
+        LockDown.efi {PK,KEK,DB}.{key,crt}
+
+  lockdown-image:
+    build-packages:
+      - dosfstools
+      - mtools
+    after:
+      - ovmf
+      - efitools
+    plugin: nil
+    source: lockdown-image
+    override-build: |
+      mkdir -p ./root/efi/EFI/BOOT
+      cp "${CRAFT_STAGE}/fw/Shell.efi" ./root/efi/EFI/BOOT/BOOTX64.EFI
+      cp "${CRAFT_STAGE}/secboot/LockDown.efi" ./root/
+
+      rm -f lockdown.img
+      truncate --size 100M lockdown.img
+      systemd-repart --empty=require --dry-run=no --offline=true --definitions=./repart.d --root=./root lockdown.img
+
+      install -Dm644 -t "${CRAFT_PART_INSTALL}" lockdown.img
+    prime:
+      - -lockdown.img
+
+  ovmf-secboot:
+    build-packages:
+      - qemu-system-x86
+    after:
+      - lockdown-image
+    plugin: nil
+    source: lockdown-image
+    override-build: |
+      cp "${CRAFT_STAGE}/fw/OVMF_VARS.fd" .
+
+      qemu-system-x86_64 -nographic -m 4G -smp 2 -M q35 \
+        -drive "if=pflash,file=${CRAFT_STAGE}/fw/OVMF_CODE.fd,readonly=on,format=raw" \
+        -drive "if=pflash,file=OVMF_VARS.fd,format=raw" \
+        -drive "if=virtio,file=${CRAFT_STAGE}/lockdown.img,format=raw"
+
+      install -Dm644 OVMF_VARS.fd "${CRAFT_PART_INSTALL}/fw/OVMF_VARS.secboot.fd"
